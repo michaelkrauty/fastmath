@@ -6,6 +6,13 @@ import json
 import os
 import statistics
 
+
+# File paths
+
+performance_data_file_path = "performance.json"
+config_file_path = "config.json"
+
+
 # List to store performance data of the user
 performance_data = []
 
@@ -14,11 +21,11 @@ def save_performance_data():
     Save the performance data to a JSON file.
     If the file does not exist, it creates a new file with an empty list.
     """
-    if not os.path.exists('performance.json'):
-        with open('performance.json', 'w') as f:
+    if not os.path.exists(performance_data_file_path):
+        with open(performance_data_file_path, 'w') as f:
             json.dump([], f)  # Create an empty list in the file if it doesn't exist
 
-    with open('performance.json', 'w') as f:
+    with open(performance_data_file_path, 'w') as f:
         json.dump(performance_data, f, indent=1)
 
 def load_performance_data():
@@ -27,8 +34,8 @@ def load_performance_data():
     If the file does not exist, initializes the performance_data as an empty list.
     """
     global performance_data
-    if os.path.exists('performance.json'):
-        with open('performance.json', 'r') as f:
+    if os.path.exists(performance_data_file_path):
+        with open(performance_data_file_path, 'r') as f:
             performance_data = json.load(f)
     else:
         performance_data = []  # Initialize as empty list if file doesn't exist
@@ -168,8 +175,8 @@ def load_config():
         'difficulties': {'addition': 1, 'subtraction': 1, 'multiplication': 1, 'division': 1},
         'allow_negative': True
     }
-    if os.path.exists('config.json'):
-        with open('config.json', 'r') as f:
+    if os.path.exists(config_file_path):
+        with open(config_file_path, 'r') as f:
             return json.load(f)
     else:
         return default_config
@@ -178,7 +185,7 @@ def save_config(config):
     """
     Save the configuration to a JSON file.
     """
-    with open('config.json', 'w') as f:
+    with open(config_file_path, 'w') as f:
         json.dump(config, f, indent=4)
 
 def main_menu(term):
