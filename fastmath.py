@@ -234,7 +234,7 @@ def main_menu(term):
                         display_stats(term)  # Handle Stats selection
                     elif menu_items[current_selection].startswith('Allow Negative Results'):
                         config['allow_negative'] = not config['allow_negative']
-                        menu_items[current_selection] = f'Allow Negative Results: {'Enabled' if config['allow_negative'] else 'Disabled'}'
+                        menu_items[current_selection] = f"Allow Negative Results: {'Enabled' if config['allow_negative'] else 'Disabled'}"
                         save_config(config)
                 elif key.lower() == 'q':
                     print(term.normal, term.clear, end="")
