@@ -128,10 +128,20 @@ def log_attempt(problem, correct, time_taken, difficulty):
     This function also handles the logic for adjusting the difficulty level based on user performance.
     """
     global config
+    # Parse the problem to store its components separately
+    problem_parts = problem.split()
+    num1 = int(problem_parts[0])
+    operation_symbol = problem_parts[1]
+    num2 = int(problem_parts[2])
+    
     entry = {
         "problem": problem,
+        "num1": num1,
+        "operation": operation_symbol,
+        "num2": num2,
         "correct": correct,
         "time_taken": time_taken,
+        "typing_time_estimate": estimate_typing_time(str(eval(problem))),
         "difficulty": difficulty,
         "timestamp": datetime.now().isoformat()
     }
@@ -139,7 +149,6 @@ def log_attempt(problem, correct, time_taken, difficulty):
 
     # Map operation symbols to names
     operation_map = {'+': 'addition', '-': 'subtraction', '*': 'multiplication', '/': 'division'}
-    operation_symbol = problem.split()[1]
     operation = operation_map[operation_symbol]
 
     # Analyze recent performance for this operation
@@ -165,6 +174,19 @@ def log_attempt(problem, correct, time_taken, difficulty):
         config['difficulties'][operation] = max(1, config['difficulties'][operation] - 1)  # Decrease difficulty but not below 1
 
     save_config(config)
+
+def estimate_typing_time(answer):
+    """
+    Estimate the time it takes to type an answer.
+    This function provides a simple estimate based on the length of the answer
+    and an average typing speed.
+    """
+    # Average time per character in seconds (adjust based on typical user typing speed)
+    avg_time_per_char = 0.2
+    # Base time for processing the problem (thinking time)
+    base_time = 0.5
+    
+    return base_time + (len(answer) * avg_time_per_char)
 
 def load_config():
     """
@@ -364,6 +386,168 @@ def display_stats(term):
     print("\nPress any key to return.")
     term.inkey()
 
+def get_specific_problem_history(num1, operation, num2):
+    """
+    Get history of a specific problem including the exact problem and variants
+    where operands are in different order for commutative operations.
+    
+    Returns: List of entries for this specific problem
+    """
+    exact_match = []
+    similar_match = []  # For commutative operations (a+b = b+a, a*b = b*a)
+    
+    for entry in performance_data:
+        # Check for exact match
+        if (entry.get('num1') == num1 and 
+            entry.get('operation') == operation and 
+            entry.get('num2') == num2):
+            exact_match.append(entry)
+        
+        # For addition and multiplication, check for commutative variant
+        if operation in ['+', '*'] and (entry.get('num1') == num2 and 
+                                        entry.get('operation') == operation and 
+                                        entry.get('num2') == num1):
+            similar_match.append(entry)
+    
+    return exact_match, similar_match
+
+def evaluate_problem_difficulty(num1, operation, num2, normalized_typing_time):
+    """
+    Evaluate how difficult a specific problem is for the user based on:
+    1. Previous correctness
+    2. Time taken to solve (adjusted for typing time)
+    3. Problem variants (e.g., 4+12 vs 12+4)
+    
+    Returns a score where higher means the user needs more practice on this problem
+    """
+    # Get history for this exact problem and similar problems (commutative variants)
+    exact_history, similar_history = get_specific_problem_history(num1, operation, num2)
+    
+    # Initialize base score
+    score = 1.0
+    
+    # Factor 1: Has the player gotten this wrong before?
+    exact_wrong = sum(1 for entry in exact_history if not entry['correct'])
+    if exact_wrong > 0:
+        # Increase score if user has gotten this wrong before
+        score += min(exact_wrong * 0.5, 2.0)  # Cap at 2.0
+    
+    # Factor 2: Has the player gotten this right before?
+    exact_correct = sum(1 for entry in exact_history if entry['correct'])
+    if exact_correct > 0:
+        # Reduce score if user has gotten this right before (but not to zero)
+        score = max(0.5, score - (0.3 * exact_correct))
+    
+    # Factor 3: Consider similar problems (for commutative operations)
+    if operation in ['+', '*'] and similar_history:
+        similar_wrong = sum(1 for entry in similar_history if not entry['correct'])
+        similar_correct = sum(1 for entry in similar_history if entry['correct'])
+        
+        # Slightly increase score for wrong similar problems
+        if similar_wrong > 0:
+            score += min(similar_wrong * 0.3, 1.0)  # Lower impact, capped at 1.0
+            
+        # Slightly decrease score for correct similar problems
+        if similar_correct > 0:
+            score = max(0.3, score - (0.2 * similar_correct))
+    
+    # Factor 4: Consider typing time impact - we want to avoid giving problems with the same
+    # answer repeatedly in a row as it may just be rote memory of typing pattern
+    last_five_entries = performance_data[-5:] if performance_data else []
+    recent_answers = [str(eval(f"{entry.get('num1')} {entry.get('operation')} {entry.get('num2')}")) 
+                     for entry in last_five_entries if 'num1' in entry and 'operation' in entry and 'num2' in entry]
+    
+    current_answer = str(eval(f"{num1} {operation} {num2}"))
+    if current_answer in recent_answers:
+        # Reduce score for answers we've typed very recently
+        score *= 0.7
+    
+    # Factor 5: Adjust based on normalized typing time
+    score *= (1.0 + normalized_typing_time * 0.3)  # Up to 30% boost for problems with complex answers
+    
+    return score
+
+def smart_generate_problem(operation, difficulty, allow_negative):
+    """
+    Generate a math problem using smart selection based on user performance history.
+    This version considers:
+    1. Time to solve problems (adjusted for typing time)
+    2. Previous right/wrong answers
+    3. Problem variants (e.g., 4+12 vs 12+4)
+    """
+    # Adjusted scaling: use a smaller base for exponential growth
+    base_val = 5  # Base value for difficulty scaling
+    growth_factor = 1.1  # Growth factor for each difficulty level
+    
+    # Maximum value based on difficulty
+    adjusted_max_val = int(base_val * (growth_factor ** (difficulty - 1)))
+    
+    # Generate candidate problems and evaluate them
+    candidates = []
+    max_candidates = 10  # Generate several candidates and pick the best one
+    
+    for _ in range(max_candidates):
+        if operation == 'addition':
+            num1 = random.randint(1, adjusted_max_val)
+            num2 = random.randint(1, adjusted_max_val)
+            answer = num1 + num2
+            problem = f"{num1} + {num2}"
+            
+            # Sometimes swap operands to ensure we practice different representations
+            if random.random() < 0.5:
+                problem = f"{num2} + {num1}"
+                # Answer remains the same
+            
+        elif operation == 'subtraction':
+            num1 = random.randint(1, adjusted_max_val)
+            num2 = random.randint(1, num1) if not allow_negative else random.randint(1, adjusted_max_val)
+            answer = num1 - num2
+            problem = f"{num1} - {num2}"
+            
+        elif operation == 'multiplication':
+            num1 = random.randint(1, adjusted_max_val)
+            num2 = random.randint(1, adjusted_max_val)
+            answer = num1 * num2
+            problem = f"{num1} * {num2}"
+            
+            # Sometimes swap operands to ensure we practice different representations
+            if random.random() < 0.5:
+                problem = f"{num2} * {num1}"
+                # Answer remains the same
+                
+        elif operation == 'division':
+            num2 = random.randint(1, adjusted_max_val)
+            answer = random.randint(1, adjusted_max_val)
+            num1 = num2 * answer
+            problem = f"{num1} / {num2}"
+        
+        # Parse the problem to evaluate difficulty
+        problem_parts = problem.split()
+        candidate_num1 = int(problem_parts[0])
+        candidate_op = problem_parts[1]
+        candidate_num2 = int(problem_parts[2])
+        
+        # Estimate typing time and normalize it
+        answer_str = str(eval(problem))
+        typing_time = estimate_typing_time(answer_str)
+        normalized_typing_time = min(1.0, typing_time / 5.0)  # Normalize to 0-1 range, cap at 1.0
+        
+        # Evaluate problem difficulty
+        score = evaluate_problem_difficulty(candidate_num1, candidate_op, candidate_num2, normalized_typing_time)
+        
+        candidates.append((problem, str(answer), score))
+    
+    # Choose based on weighted scores (higher score = higher chance of selection)
+    total_score = sum(score for _, _, score in candidates)
+    if total_score > 0:
+        # Select problem weighted by difficulty score
+        selection_weights = [score/total_score for _, _, score in candidates]
+        selected_index = random.choices(range(len(candidates)), weights=selection_weights, k=1)[0]
+        return candidates[selected_index][0], candidates[selected_index][1]
+    else:
+        # Fallback if scores are all zero
+        return candidates[0][0], candidates[0][1]
+
 def main_game(term):
     """
     Main game loop where the user is presented with math problems to solve.
@@ -380,7 +564,7 @@ def main_game(term):
                 difficulties = config['difficulties']
                 problem_weights = get_problem_weights()
                 operation = random.choices(list(operations.keys()), weights=[problem_weights.get(op, 1) for op in operations], k=1)[0]
-                problem, correct_answer = generate_problem(operation, difficulties[operation], allow_negative)
+                problem, correct_answer = smart_generate_problem(operation, difficulties[operation], allow_negative)
                 print(term.clear + term.bright_green + term.move_yx(0, 0) + f"Solve: {term.normal}{problem} = ", end="", flush=True)
 
                 user_answer = ""
