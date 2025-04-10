@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-04-10
+
+### Added
+- Education-focused problem generation based on pedagogical principles
+- New functions to identify and prioritize mathematically valuable patterns
+- Targeted practice for critical number relationships (pairs that sum to 10/100)
+- Intelligent adjustment of problem selection based on user's current skill level
+- Enhanced variety in practice to prevent answer memorization
+
+### Changed
+- Problem selection now balances educational value with practice needs
+- Increased emphasis on core math skills like doubling, halving, and near-multiples
+- Adjusted multiplication problem generation to focus on important number patterns
+- Improved division practice with pedagogically important divisors (2, 5, 10)
+
+### Fixed
+- Empty range errors in random number generation at various difficulty levels
+- Better handling of edge cases in multiplication and division problem generation
+- Improved robustness of problem generation algorithms
+
 ## [1.1.0] - 2025-04-07
 
 ### Added
