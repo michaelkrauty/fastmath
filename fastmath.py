@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 import random
 import time
@@ -9,12 +9,17 @@ from datetime import datetime
 import json
 import os
 import statistics
+from platformdirs import user_data_dir
+import shutil
 
+
+# Define application data directory
+app_data_dir = user_data_dir(appname="fastmath", appauthor="michaelkrauty")
+os.makedirs(app_data_dir, exist_ok=True)
 
 # File paths for persistent storage
-performance_data_file_path = "performance.json"  # Stores user performance history
-config_file_path = "config.json"  # Stores user configuration settings
-
+performance_data_file_path = os.path.join(app_data_dir, "performance.json")  # Stores user performance history
+config_file_path = os.path.join(app_data_dir, "config.json")  # Stores user configuration settings
 
 # List to store performance data of the user - loaded from file at startup
 performance_data = []
