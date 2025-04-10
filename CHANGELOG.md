@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2025-04-10
+
+### Added
+- Use platformdirs library to store user data in platform-appropriate locations
+- Automatic creation of user data directory if it doesn't exist
+
+### Changed
+- Store user configuration and performance data in OS-specific user data directory
+- Removed .gitignore as data files are no longer in the repository root
+
 ## [1.2.0] - 2025-04-10
 
 ### Added

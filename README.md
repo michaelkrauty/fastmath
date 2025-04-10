@@ -1,9 +1,10 @@
-# FastMath v1.2.0
+# FastMath v1.2.1
 
 A terminal-based math practice application that adapts to your skill level.
 
 ## Requirements
 - [blessed](https://pypi.org/project/blessed/)
+- [platformdirs](https://pypi.org/project/platformdirs/)
 
 ## Controls
 - Arrow keys/Enter to navigate menus
