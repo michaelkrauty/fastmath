@@ -4,13 +4,14 @@ __version__ = "1.2.1"
 
 import random
 import time
+import statistics
+import re
+import os
+import json
+import shutil
 from blessed import Terminal
 from datetime import datetime
-import json
-import os
-import statistics
 from platformdirs import user_data_dir
-import shutil
 
 
 # Define application data directory
@@ -228,7 +229,20 @@ def load_config():
     default_config = {
         'operations': {'addition': True, 'subtraction': True, 'multiplication': True, 'division': True},
         'difficulties': {'addition': 1, 'subtraction': 1, 'multiplication': 1, 'division': 1},
-        'allow_negative': True
+        'allow_negative': True,
+        'algebra': {
+            'enabled': False,
+            'parentheses': True,
+            'exponents': True, 
+            'fractions': True,
+            'variables': True
+        },
+        'algebra_difficulties': {
+            'parentheses': 1,
+            'exponents': 1,
+            'fractions': 1,
+            'variables': 1
+        }
     }
     if os.path.exists(config_file_path):
         with open(config_file_path, 'r') as f:
@@ -257,6 +271,7 @@ def main_menu(term):
             'Difficulties',
             f"Allow Negative Results: {'Enabled' if config['allow_negative'] else 'Disabled'}",
             'Stats',  # Added Stats option
+            'Algebra', # Add algebra menu option
             'Quit'
         ]
         current_selection = 0
@@ -287,6 +302,8 @@ def main_menu(term):
                         adjust_difficulties(term)
                     elif menu_items[current_selection] == 'Stats':
                         display_stats(term)  # Handle Stats selection
+                    elif menu_items[current_selection] == 'Algebra':
+                        algebra_menu(term)  # New algebra menu
                     elif menu_items[current_selection].startswith('Allow Negative Results'):
                         config['allow_negative'] = not config['allow_negative']
                         menu_items[current_selection] = f"Allow Negative Results: {'Enabled' if config['allow_negative'] else 'Disabled'}"
@@ -1281,16 +1298,57 @@ def main_game(term):
     global config
     operations = config['operations']
     allow_negative = config['allow_negative']
+    algebra_enabled = config['algebra']['enabled']
 
     try:
         exit_game = False
         with term.cbreak(), term.hidden_cursor():
             while True:
-                difficulties = config['difficulties']
-                problem_weights = get_problem_weights()
-                operation = random.choices(list(operations.keys()), weights=[problem_weights.get(op, 1) for op in operations], k=1)[0]
-                problem, correct_answer = smart_generate_problem(operation, difficulties[operation], allow_negative)
-                print(term.clear + term.bright_green + term.move_yx(0, 0) + f"Solve: {term.normal}{problem} = ", end="", flush=True)
+                # Choose between basic math and algebra
+                if algebra_enabled and random.random() < 0.4:  # 40% chance of algebra when enabled
+                    # Select an algebra type from enabled ones
+                    enabled_algebra_types = [at for at, enabled in config['algebra'].items() 
+                                          if enabled and at != 'enabled']
+                    
+                    if not enabled_algebra_types:  # If no algebra types are enabled
+                        problem_type = 'basic'
+                    else:
+                        problem_type = 'algebra'
+                        algebra_type = random.choice(enabled_algebra_types)
+                        algebra_difficulty = config['algebra_difficulties'][algebra_type]
+                else:
+                    problem_type = 'basic'
+                
+                if problem_type == 'basic':
+                    # Standard math problem
+                    difficulties = config['difficulties']
+                    
+                    # Get enabled operations
+                    enabled_operations = [op for op, enabled in operations.items() if enabled]
+                    if not enabled_operations:
+                        print(term.clear + "No operations enabled. Please enable at least one operation.")
+                        time.sleep(2)
+                        return
+                    
+                    problem_weights = get_problem_weights()
+                    weighted_operations = [(op, problem_weights.get(op, 1)) for op in enabled_operations]
+                    operation = random.choices(
+                        [op for op, _ in weighted_operations],
+                        weights=[weight for _, weight in weighted_operations], 
+                        k=1
+                    )[0]
+                    
+                    try:
+                        problem, correct_answer = smart_generate_problem(operation, difficulties[operation], allow_negative)
+                    except:
+                        # Fallback to simple generation if smart generation fails
+                        problem, correct_answer = generate_problem(operation, difficulties[operation], allow_negative)
+                else:  # algebra problem
+                    problem, correct_answer = generate_algebra_problem(algebra_type, algebra_difficulty, allow_negative)
+
+                print(term.clear + term.bright_green + term.move_yx(0, 0) + f"Solve: {term.normal}{problem}", end="", flush=True)
+                if "=" not in problem:
+                    print(" = ", end="", flush=True)
 
                 user_answer = ""
                 start_time = time.time()
@@ -1306,8 +1364,14 @@ def main_game(term):
                         user_answer += inp
                         print(term.green + inp, end="", flush=True)
                     else:
-                        print(f"{term.red}{inp}\n       {term.bright_green}{problem} {term.normal}= {term.bright_green}{correct_answer}{term.normal}", flush=True)
-                        log_attempt(problem, False, time.time() - start_time, difficulties[operation])
+                        print(f"{term.red}{inp}\n{term.bright_green}Problem: {term.normal}{problem}\n{term.bright_green}Answer: {term.normal}{correct_answer}", flush=True)
+                        
+                        # Log the attempt according to problem type
+                        if problem_type == 'basic':
+                            log_attempt(problem, False, time.time() - start_time, difficulties[operation])
+                        else:  # algebra
+                            log_algebra_attempt(problem, False, time.time() - start_time, algebra_difficulty, algebra_type)
+                            
                         # Ignore any input during the cooldown period
                         start_cooldown = time.time()
                         while time.time() - start_cooldown < 1.5:
@@ -1315,7 +1379,15 @@ def main_game(term):
                         break
                 else:
                     if len(user_answer) == len(correct_answer):
-                        log_attempt(problem, True, time.time() - start_time, difficulties[operation])
+                        # Log the attempt according to problem type
+                        if problem_type == 'basic':
+                            log_attempt(problem, True, time.time() - start_time, difficulties[operation])
+                        else:  # algebra
+                            log_algebra_attempt(problem, True, time.time() - start_time, algebra_difficulty, algebra_type)
+                        
+                        # Small reward for correct answer
+                        print(term.green + "\nCorrect!")
+                        time.sleep(0.6)
     finally:
         save_performance_data()  # Save data when exiting the game loop
 
@@ -1340,3 +1412,863 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def generate_algebra_problem(algebra_type, difficulty, allow_negative):
+    """
+    Generate an algebra problem based on the algebra type and difficulty level.
+    
+    Args:
+        algebra_type (str): Type of algebra problem ('parentheses', 'exponents', 'fractions', 'variables')
+        difficulty (int): Current difficulty level
+        allow_negative (bool): Whether negative results are allowed
+    
+    Returns:
+        tuple: A tuple containing (problem_string, answer_string)
+    """
+    # Adjusted scaling: use a smaller base for exponential growth
+    base_val = 3  # Smaller base value for algebra to start easier
+    growth_factor = 1.2  # Slightly larger growth factor for algebra
+    
+    # Calculate the maximum value based on the difficulty
+    adjusted_max_val = int(base_val * (growth_factor ** (difficulty - 1)))
+    adjusted_max_val = max(adjusted_max_val, 5)  # Ensure minimum value
+    
+    if algebra_type == 'parentheses':
+        return generate_parentheses_problem(adjusted_max_val, difficulty, allow_negative)
+    elif algebra_type == 'exponents':
+        return generate_exponents_problem(adjusted_max_val, difficulty, allow_negative)
+    elif algebra_type == 'fractions':
+        return generate_fractions_problem(adjusted_max_val, difficulty, allow_negative)
+    elif algebra_type == 'variables':
+        return generate_variables_problem(adjusted_max_val, difficulty, allow_negative)
+    
+    # Fallback to basic parentheses problem
+    return generate_parentheses_problem(adjusted_max_val, 1, allow_negative)
+
+def generate_parentheses_problem(max_val, difficulty, allow_negative):
+    """
+    Generate a problem involving parentheses.
+    
+    Examples:
+    - (3 + 4) * 2
+    - 5 * (8 - 3)
+    - (7 + 2) * (6 - 1)
+    """
+    operations = ['+', '-', '*']
+    if difficulty == 1:
+        # Simple parentheses with addition/subtraction inside, multiplication outside
+        inner_op = random.choice(['+', '-'])
+        outer_op = '*'
+        
+        num1 = random.randint(1, min(max_val, 10))
+        num2 = random.randint(1, min(max_val, 10))
+        num3 = random.randint(2, min(max_val, 5))  # Small multiplier outside
+        
+        # Ensure subtraction results in positive (unless negative allowed)
+        if inner_op == '-' and not allow_negative and num2 > num1:
+            num1, num2 = num2, num1
+            
+        problem = f"({num1} {inner_op} {num2}) {outer_op} {num3}"
+        answer = eval(problem)
+        
+    elif difficulty == 2:
+        # More complex operations with larger numbers
+        inner_op = random.choice(operations)
+        outer_op = random.choice(operations)
+        
+        num1 = random.randint(1, min(max_val, 20))
+        num2 = random.randint(1, min(max_val, 20))
+        num3 = random.randint(1, min(max_val, 10))
+        
+        # Handle inner operation constraints
+        if inner_op == '-' and not allow_negative and num2 > num1:
+            num1, num2 = num2, num1
+        if inner_op == '*':
+            # Limit multiplication to avoid very large numbers
+            num2 = min(num2, 5)
+        
+        # Handle outer operation constraints
+        if outer_op == '-' and not allow_negative:
+            inner_result = eval(f"{num1} {inner_op} {num2}")
+            if num3 > inner_result:
+                outer_op = '+'
+        
+        problem = f"({num1} {inner_op} {num2}) {outer_op} {num3}"
+        answer = eval(problem)
+        
+    else:  # difficulty >= 3
+        # More complex problems with nested parentheses or multiple operations
+        if difficulty >= 4 and random.random() < 0.4:
+            # Double parentheses: (a op b) op (c op d)
+            op1 = random.choice(operations)
+            op2 = random.choice(operations)
+            op3 = random.choice(operations)
+            
+            num1 = random.randint(1, min(max_val, 20))
+            num2 = random.randint(1, min(max_val, 20))
+            num3 = random.randint(1, min(max_val, 20))
+            num4 = random.randint(1, min(max_val, 20))
+            
+            # Handle operation constraints
+            if op1 == '-' and not allow_negative and num2 > num1:
+                num1, num2 = num2, num1
+            if op2 == '-' and not allow_negative and num4 > num3:
+                num3, num4 = num4, num3
+            if op1 == '*':
+                num2 = min(num2, 5)  # Limit multiplication
+            if op2 == '*':
+                num4 = min(num4, 5)  # Limit multiplication
+                
+            problem = f"({num1} {op1} {num2}) {op3} ({num3} {op2} {num4})"
+            
+            # Ensure final result is valid
+            if op3 == '/' and not allow_negative:
+                # Convert to multiplication to avoid division issues
+                op3 = '*'
+                problem = f"({num1} {op1} {num2}) {op3} ({num3} {op2} {num4})"
+                
+            try:
+                answer = eval(problem)
+                if isinstance(answer, float):
+                    answer = round(answer, 2)
+            except:
+                # Fallback if problem has issues
+                return generate_parentheses_problem(max_val, difficulty-1, allow_negative)
+        else:
+            # Three operations with prioritized parentheses: (a op b op c) op d
+            op1 = random.choice(operations)
+            op2 = random.choice(operations)
+            op3 = random.choice(operations)
+            
+            num1 = random.randint(1, min(max_val, 15))
+            num2 = random.randint(1, min(max_val, 15))
+            num3 = random.randint(1, min(max_val, 15))
+            num4 = random.randint(1, min(max_val, 10))
+            
+            # Handle specific operations
+            if op1 == '-' and not allow_negative and num2 > num1:
+                num1, num2 = num2, num1
+                
+            if op2 == '-' and not allow_negative:
+                inner_result = eval(f"{num1} {op1} {num2}")
+                if num3 > inner_result:
+                    op2 = '+'
+            
+            if op1 == '*' or op2 == '*':
+                # Limit multiplication to avoid large numbers
+                num2 = min(num2, 5)
+                num3 = min(num3, 5)
+            
+            problem = f"({num1} {op1} {num2} {op2} {num3}) {op3} {num4}"
+            
+            try:
+                answer = eval(problem)
+                if isinstance(answer, float):
+                    answer = round(answer, 2)
+            except:
+                # Fallback if problem has issues
+                return generate_parentheses_problem(max_val, difficulty-1, allow_negative)
+    
+    return problem, str(answer)
+
+def generate_exponents_problem(max_val, difficulty, allow_negative):
+    """
+    Generate a problem involving exponents.
+    
+    Examples:
+    - 2^3
+    - 3^2 + 1
+    - (2+1)^2
+    """
+    if difficulty == 1:
+        # Simple exponent with small base and power
+        base = random.randint(2, min(5, max_val))
+        power = random.randint(2, 3)
+        
+        problem = f"{base}^{power}"
+        answer = base ** power
+        
+    elif difficulty == 2:
+        # Exponent with operation
+        base = random.randint(2, min(5, max_val))
+        power = random.randint(2, 3)
+        num = random.randint(1, min(10, max_val))
+        
+        op = random.choice(['+', '-', '*'])
+        if op == '-' and not allow_negative and base**power < num:
+            op = '+'
+            
+        problem = f"{base}^{power} {op} {num}"
+        answer = eval(f"{base**power} {op} {num}")
+        
+    else:  # difficulty >= 3
+        if random.random() < 0.4:
+            # Parentheses with exponent: (a op b)^c
+            num1 = random.randint(1, min(5, max_val))
+            num2 = random.randint(1, min(5, max_val))
+            power = random.randint(2, min(difficulty, 3))
+            
+            op = random.choice(['+', '-'])
+            if op == '-' and not allow_negative and num2 > num1:
+                num1, num2 = num2, num1
+                
+            problem = f"({num1} {op} {num2})^{power}"
+            
+            # Calculate the inner expression
+            if op == '+':
+                inner = num1 + num2
+            else:
+                inner = num1 - num2
+                
+            answer = inner ** power
+            
+        else:
+            # More complex expression with exponents
+            base1 = random.randint(2, min(5, max_val))
+            power1 = random.randint(2, min(difficulty, 4))
+            base2 = random.randint(2, min(5, max_val))
+            power2 = random.randint(1, min(difficulty, 3))
+            
+            op = random.choice(['+', '-', '*'])
+            if op == '-' and not allow_negative and base1**power1 < base2**power2:
+                op = '+'
+                
+            problem = f"{base1}^{power1} {op} {base2}^{power2}"
+            
+            # Calculate the answer correctly
+            if op == '+':
+                answer = (base1 ** power1) + (base2 ** power2)
+            elif op == '-':
+                answer = (base1 ** power1) - (base2 ** power2)
+            else:  # '*'
+                if difficulty < 5:
+                    # For lower difficulties, limit multiplication to avoid huge numbers
+                    op = random.choice(['+', '-'])
+                    if op == '-' and base1**power1 < base2**power2:
+                        op = '+'
+                    problem = f"{base1}^{power1} {op} {base2}^{power2}"
+                    
+                    if op == '+':
+                        answer = (base1 ** power1) + (base2 ** power2)
+                    else:
+                        answer = (base1 ** power1) - (base2 ** power2)
+                else:
+                    answer = (base1 ** power1) * (base2 ** power2)
+    
+    # Check if the answer is reasonable (not too large)
+    if answer > 10000:
+        # Fallback to simpler problem
+        return generate_exponents_problem(max_val, max(1, difficulty-1), allow_negative)
+    
+    return problem, str(answer)
+
+def generate_fractions_problem(max_val, difficulty, allow_negative):
+    """
+    Generate a problem involving fractions.
+    
+    Examples:
+    - 1/2 + 1/4
+    - 3/4 - 1/2
+    - 2/3 * 3/2
+    """
+    def gcd(a, b):
+        """Find greatest common divisor using Euclidean algorithm"""
+        while b:
+            a, b = b, a % b
+        return a
+    
+    if difficulty == 1:
+        # Simple fractions with addition/subtraction
+        # Use common fractions with small denominators
+        common_fractions = [(1,2), (1,3), (1,4), (2,3), (3,4)]
+        frac1 = random.choice(common_fractions)
+        frac2 = random.choice(common_fractions)
+        
+        op = random.choice(['+', '-'])
+        
+        # Ensure positive result if negative not allowed
+        if op == '-' and not allow_negative:
+            frac1_value = frac1[0]/frac1[1]
+            frac2_value = frac2[0]/frac2[1]
+            if frac2_value > frac1_value:
+                frac1, frac2 = frac2, frac1
+        
+        problem = f"{frac1[0]}/{frac1[1]} {op} {frac2[0]}/{frac2[1]}"
+        
+        if op == '+':
+            num = frac1[0] * frac2[1] + frac2[0] * frac1[1]
+            denom = frac1[1] * frac2[1]
+        else:  # op == '-'
+            num = frac1[0] * frac2[1] - frac2[0] * frac1[1]
+            denom = frac1[1] * frac2[1]
+        
+        # Handle potential negative numerator
+        num_sign = 1 if num >= 0 else -1
+        num_abs = abs(num)
+        
+        common_divisor = gcd(num_abs, denom)
+        num = (num_sign * num_abs) // common_divisor
+        denom = denom // common_divisor
+        
+        if denom == 1:
+            answer = str(num)
+        else:
+            answer = f"{num}/{denom}"
+            
+    elif difficulty == 2:
+        # Fractions with multiplication/division or mixed operations
+        ops = ['+', '-', '*']
+        op = random.choice(ops)
+        
+        # Create fractions with larger denominators
+        num1 = random.randint(1, min(9, max_val))
+        denom1 = random.randint(num1+1, min(10, max_val+5))
+        num2 = random.randint(1, min(9, max_val))
+        denom2 = random.randint(num2+1, min(10, max_val+5))
+        
+        # Ensure not reducing to identical problem types
+        if gcd(num1, denom1) != 1:
+            num1 = num1 + 1
+        if gcd(num2, denom2) != 1:
+            num2 = num2 + 1
+        
+        # Simplify fractions first
+        divisor1 = gcd(num1, denom1)
+        num1 //= divisor1
+        denom1 //= divisor1
+        
+        divisor2 = gcd(num2, denom2)
+        num2 //= divisor2
+        denom2 //= divisor2
+        
+        # Ensure positive result if negative not allowed
+        if op == '-' and not allow_negative:
+            if num2/denom2 > num1/denom1:
+                num1, num2 = num2, num1
+                denom1, denom2 = denom2, denom1
+        
+        problem = f"{num1}/{denom1} {op} {num2}/{denom2}"
+        
+        if op == '+':
+            result_num = num1 * denom2 + num2 * denom1
+            result_denom = denom1 * denom2
+        elif op == '-':
+            result_num = num1 * denom2 - num2 * denom1
+            result_denom = denom1 * denom2
+        elif op == '*':
+            result_num = num1 * num2
+            result_denom = denom1 * denom2
+        
+        # Simplify the result
+        num_sign = 1 if result_num >= 0 else -1
+        result_num_abs = abs(result_num)
+        
+        divisor = gcd(result_num_abs, result_denom)
+        result_num = (num_sign * result_num_abs) // divisor
+        result_denom = result_denom // divisor
+        
+        if result_denom == 1:
+            answer = str(result_num)
+        else:
+            answer = f"{result_num}/{result_denom}"
+            
+    else:  # difficulty >= 3
+        # Complex fraction operations and mixed numbers
+        if random.random() < 0.5 and difficulty >= 4:
+            # Mixed numbers or complex operation
+            # For higher difficulty, create a problem with 3 fractions
+            op1 = random.choice(['+', '-', '*'])
+            op2 = random.choice(['+', '-', '*'])
+            
+            # Ensure reasonable fractions
+            num1 = random.randint(1, min(7, max_val))
+            denom1 = random.randint(num1+1, min(9, max_val+5))
+            num2 = random.randint(1, min(7, max_val))
+            denom2 = random.randint(num2+1, min(9, max_val+5))
+            num3 = random.randint(1, min(7, max_val))
+            denom3 = random.randint(num3+1, min(9, max_val+5))
+            
+            # Simplify fractions
+            divisor1 = gcd(num1, denom1)
+            num1 //= divisor1
+            denom1 //= divisor1
+            
+            divisor2 = gcd(num2, denom2)
+            num2 //= divisor2
+            denom2 //= divisor2
+            
+            divisor3 = gcd(num3, denom3)
+            num3 //= divisor3
+            denom3 //= divisor3
+            
+            # Create problem with parentheses for clarity
+            problem = f"({num1}/{denom1} {op1} {num2}/{denom2}) {op2} {num3}/{denom3}"
+            
+            # Calculate result of the first operation
+            if op1 == '+':
+                result1_num = num1 * denom2 + num2 * denom1
+                result1_denom = denom1 * denom2
+            elif op1 == '-':
+                result1_num = num1 * denom2 - num2 * denom1
+                result1_denom = denom1 * denom2
+                # Check if result is negative
+                if result1_num < 0 and not allow_negative:
+                    result1_num = -result1_num
+                    op2 = '+' if op2 == '-' else '-'  # Flip second operation
+            elif op1 == '*':
+                result1_num = num1 * num2
+                result1_denom = denom1 * denom2
+            
+            # Calculate final result
+            if op2 == '+':
+                result_num = result1_num * denom3 + num3 * result1_denom
+                result_denom = result1_denom * denom3
+            elif op2 == '-':
+                result_num = result1_num * denom3 - num3 * result1_denom
+                result_denom = result1_denom * denom3
+                # Check if result is negative
+                if result_num < 0 and not allow_negative:
+                    # Adjust problem to avoid negative
+                    op1, op2 = '+', '+'
+                    problem = f"({num1}/{denom1} {op1} {num2}/{denom2}) {op2} {num3}/{denom3}"
+                    # Recalculate
+                    result1_num = num1 * denom2 + num2 * denom1
+                    result1_denom = denom1 * denom2
+                    result_num = result1_num * denom3 + num3 * result1_denom
+                    result_denom = result1_denom * denom3
+            elif op2 == '*':
+                result_num = result1_num * num3
+                result_denom = result1_denom * denom3
+            
+            # Simplify the final result
+            num_sign = 1 if result_num >= 0 else -1
+            result_num_abs = abs(result_num)
+            
+            divisor = gcd(result_num_abs, result_denom)
+            result_num = (num_sign * result_num_abs) // divisor 
+            result_denom = result_denom // divisor
+            
+            if result_denom == 1:
+                answer = str(result_num)
+            else:
+                answer = f"{result_num}/{result_denom}"
+                
+        else:
+            # Mixed numbers or multiple operations with fractions
+            whole_num = random.randint(1, min(5, max_val))
+            num = random.randint(1, 5)
+            denom = random.randint(num+1, 6)
+            
+            # Combine with another fraction
+            num2 = random.randint(1, 5)
+            denom2 = random.randint(num2+1, 6)
+            
+            op = random.choice(['+', '-'])
+            if op == '-' and not allow_negative:
+                # Ensure result is positive
+                # Convert mixed number to improper fraction
+                num1_total = whole_num * denom + num
+                if num1_total/denom < num2/denom2:
+                    op = '+'
+            
+            problem = f"{whole_num} {num}/{denom} {op} {num2}/{denom2}"
+            
+            # Convert mixed number to improper fraction
+            num1_total = whole_num * denom + num
+            
+            # Calculate the result
+            if op == '+':
+                result_num = num1_total * denom2 + num2 * denom
+                result_denom = denom * denom2
+            else:  # op == '-'
+                result_num = num1_total * denom2 - num2 * denom
+                result_denom = denom * denom2
+            
+            # Simplify the result
+            num_sign = 1 if result_num >= 0 else -1
+            result_num_abs = abs(result_num)
+            
+            divisor = gcd(result_num_abs, result_denom)
+            result_num = (num_sign * result_num_abs) // divisor
+            result_denom = result_denom // divisor
+            
+            # Convert back to mixed number if result is improper fraction
+            if abs(result_num) >= result_denom:
+                whole_part = result_num // result_denom
+                remainder = abs(result_num) % result_denom
+                
+                if remainder == 0:
+                    answer = str(whole_part)
+                else:
+                    if whole_part == 0:
+                        answer = f"{result_num}/{result_denom}"
+                    else:
+                        sign = "-" if result_num < 0 and whole_part >= 0 else ""
+                        answer = f"{sign}{whole_part} {remainder}/{result_denom}"
+            else:
+                answer = f"{result_num}/{result_denom}"
+    
+    try:
+        # Validate the problem and answer
+        from fractions import Fraction
+        
+        # Replace mixed numbers with their equivalent expressions
+        eval_problem = problem
+        if difficulty >= 3 and "whole_num" in locals():
+            eval_problem = eval_problem.replace(f"{whole_num} {num}/{denom}", f"({whole_num} * {denom} + {num}) / {denom}")
+        
+        # Replace a/b with Fraction(a,b)
+        import re
+        eval_problem = re.sub(r'(\d+)/(\d+)', r'Fraction(\1, \2)', eval_problem)
+        
+        # Evaluate the expression
+        eval_answer = eval(eval_problem)
+        
+        # Compare with our calculated answer
+        if isinstance(eval_answer, Fraction):
+            if eval_answer.denominator == 1:
+                validate_answer = str(eval_answer.numerator)
+            else:
+                validate_answer = f"{eval_answer.numerator}/{eval_answer.denominator}"
+        else:
+            validate_answer = str(eval_answer)
+        
+        # If our answer doesn't match the evaluation, use the evaluated answer
+        if validate_answer != answer and eval_answer != 0:
+            answer = validate_answer
+            
+    except:
+        # If there's any issue with validation, fallback to simpler problem
+        if difficulty > 1:
+            return generate_fractions_problem(max_val, difficulty-1, allow_negative)
+    
+    return problem, answer
+
+def generate_variables_problem(max_val, difficulty, allow_negative):
+    """
+    Generate a problem involving variables.
+    
+    Examples:
+    - x + 3 = 8
+    - 2x + 1 = 7
+    - 3x - 5 = 10
+    """
+    if difficulty == 1:
+        # Simple one-step equations: x + a = b or x - a = b
+        a = random.randint(1, min(10, max_val))
+        
+        if random.random() < 0.5:
+            # x + a = b
+            op = '+'
+            x = random.randint(1, min(15, max_val))
+            b = x + a
+        else:
+            # x - a = b
+            op = '-'
+            x = random.randint(a + 1 if not allow_negative else 1, min(20, max_val))
+            b = x - a
+        
+        problem = f"x {op} {a} = {b}"
+        answer = str(x)
+        
+    elif difficulty == 2:
+        # One-step multiplication/division or two-step equations
+        if random.random() < 0.5:
+            # ax = b or x/a = b
+            if random.random() < 0.7:
+                # ax = b
+                a = random.randint(2, min(5, max_val))
+                x = random.randint(1, min(10, max_val))
+                b = a * x
+                problem = f"{a}x = {b}"
+            else:
+                # x/a = b
+                a = random.randint(2, min(5, max_val))
+                b = random.randint(1, min(10, max_val))
+                x = a * b
+                problem = f"x/{a} = {b}"
+        else:
+            # ax + b = c or ax - b = c
+            a = random.randint(2, min(5, max_val))
+            b = random.randint(1, min(10, max_val))
+            x = random.randint(1, min(10, max_val))
+            
+            if random.random() < 0.5:
+                op = '+'
+                c = a * x + b
+            else:
+                op = '-'
+                c = a * x - b
+                if c < 0 and not allow_negative:
+                    op = '+'
+                    c = a * x + b
+            
+            problem = f"{a}x {op} {b} = {c}"
+            
+        answer = str(x)
+        
+    else:  # difficulty >= 3
+        if random.random() < 0.4 and difficulty >= 4:
+            # More complex equations with variables on both sides
+            a = random.randint(2, min(6, max_val))
+            b = random.randint(1, min(10, max_val))
+            c = random.randint(1, min(3, a-1)) if a > 1 else 1
+            d = random.randint(1, min(10, max_val))
+            
+            # Create equation ax + b = cx + d
+            x = (d - b) / (a - c) if a != c else "No solution"  # Handle special case
+            
+            # If x is not an integer or negative when not allowed, regenerate
+            if x == "No solution" or not isinstance(x, (int, float)) or (isinstance(x, (int, float)) and not float(x).is_integer()) or (isinstance(x, (int, float)) and float(x) < 0 and not allow_negative):
+                # Ensure integer solution
+                x = random.randint(1, min(10, max_val))
+                # Work backwards to create problem
+                d = c * x + (b - a * x)
+                if d <= 0 and difficulty < 5:
+                    d = abs(d) + random.randint(1, 5)
+            
+            problem = f"{a}x + {b} = {c}x + {d}"
+            
+            # Format x as integer if it is
+            if isinstance(x, (int, float)) and float(x).is_integer():
+                answer = str(int(x))
+            else:
+                answer = str(x)
+                
+        elif random.random() < 0.3 and difficulty >= 4:
+            # Equation with parentheses: a(x + b) = c or a(x - b) = c
+            a = random.randint(2, min(5, max_val))
+            b = random.randint(1, min(8, max_val))
+            
+            if random.random() < 0.5:
+                op = '+'
+            else:
+                op = '-'
+                
+            x = random.randint(1, min(10, max_val))
+            
+            if op == '+':
+                c = a * (x + b)
+            else:
+                if x < b and not allow_negative:
+                    x = b + random.randint(1, 5)
+                c = a * (x - b)
+            
+            problem = f"{a}(x {op} {b}) = {c}"
+            answer = str(x)
+            
+        else:
+            # Two-step equation with all operations: ax + b = c
+            a = random.randint(2, min(6, max_val))
+            x = random.randint(1, min(10, max_val))
+            
+            # Randomly decide between addition and subtraction
+            if random.random() < 0.5:
+                op = '+'
+                b = random.randint(1, min(20, max_val))
+                c = a * x + b
+            else:
+                op = '-'
+                b = random.randint(1, min(20, max_val))
+                c = a * x - b
+                if c < 0 and not allow_negative:
+                    op = '+'
+                    c = a * x + b
+            
+            problem = f"{a}x {op} {b} = {c}"
+            answer = str(x)
+    
+    return problem, answer
+
+def log_algebra_attempt(problem, correct, time_taken, difficulty, algebra_type):
+    """
+    Log an algebra problem attempt, updating performance data and adjusting difficulty.
+    
+    Args:
+        problem (str): The problem string
+        correct (bool): Whether the answer was correct
+        time_taken (float): Time taken to solve the problem
+        difficulty (int): Current difficulty level
+        algebra_type (str): Type of algebra problem
+    """
+    global config
+    
+    # Calculate expected answer for typing time estimate
+    try:
+        if '=' in problem:
+            equation_parts = problem.split(' = ')
+            answer_str = str(eval(equation_parts[1]))
+        else:
+            # For direct expressions like "2^3 + 4"
+            answer_str = str(eval(problem.replace('^', '**')))
+    except:
+        answer_str = ""  # Fallback if we can't evaluate
+    
+    entry = {
+        "problem": problem,
+        "problem_type": "algebra",
+        "algebra_type": algebra_type,
+        "correct": correct,
+        "time_taken": time_taken,
+        "typing_time_estimate": estimate_typing_time(answer_str),
+        "difficulty": difficulty,
+        "timestamp": datetime.now().isoformat()
+    }
+    performance_data.append(entry)
+
+    # Analyze recent performance for this algebra type
+    recent_attempts = [x for x in performance_data 
+                      if x.get('problem_type') == 'algebra' and x.get('algebra_type') == algebra_type][-20:]
+                      
+    if len(recent_attempts) > 5:  # Need minimum data for adjustment
+        recent_correct = sum(1 for x in recent_attempts if x['correct'])
+        recent_times = [x['time_taken'] for x in recent_attempts]
+
+        if len(recent_times) > 1:
+            mean_time = statistics.mean(recent_times)
+            std_dev_time = statistics.stdev(recent_times)
+            z_score = (time_taken - mean_time) / std_dev_time if std_dev_time > 0 else 0
+        else:
+            z_score = 0  # Default to no change if insufficient data
+
+        # Define performance criteria (more forgiving for algebra)
+        high_performance_z = -0.3  # Better than 0.3 SD below the mean time
+        low_performance_z = 0.7    # Worse than 0.7 SD above the mean time
+
+        # Adjust difficulty based on performance
+        if recent_correct / len(recent_attempts) > 0.7 and z_score <= high_performance_z:
+            config['algebra_difficulties'][algebra_type] += 1  # Increase difficulty
+        elif recent_correct / len(recent_attempts) < 0.5 or z_score >= low_performance_z:
+            config['algebra_difficulties'][algebra_type] = max(1, config['algebra_difficulties'][algebra_type] - 1)
+
+        save_config(config)
+
+def algebra_menu(term):
+    """
+    Display the algebra settings menu and handle user interactions.
+    
+    This function allows users to:
+    1. Toggle algebra mode on/off
+    2. Configure individual algebra elements
+    3. Adjust algebra difficulty levels
+    """
+    global config
+    while True:
+        print(term.clear)
+        menu_items = [
+            f"Algebra Mode: {'Enabled' if config['algebra']['enabled'] else 'Disabled'}",
+            'Configure Algebra Elements',
+            'Adjust Algebra Difficulties',
+            'Back to Main Menu'
+        ]
+        current_selection = 0
+
+        with term.cbreak(), term.hidden_cursor():
+            while True:
+                print(term.clear)
+                print(term.bold + "Algebra Settings\n" + term.normal)
+                
+                for i, item in enumerate(menu_items):
+                    if i == current_selection:
+                        print(term.reverse + item)
+                    else:
+                        print(term.normal + item)
+
+                key = term.inkey()
+                if key.code == term.KEY_UP:
+                    current_selection = max(0, current_selection - 1)
+                elif key.code == term.KEY_DOWN:
+                    current_selection = min(len(menu_items) - 1, current_selection + 1)
+                elif key.code == term.KEY_ENTER:
+                    if menu_items[current_selection] == 'Back to Main Menu':
+                        return
+                    elif menu_items[current_selection].startswith('Algebra Mode'):
+                        config['algebra']['enabled'] = not config['algebra']['enabled']
+                        menu_items[0] = f"Algebra Mode: {'Enabled' if config['algebra']['enabled'] else 'Disabled'}"
+                        save_config(config)
+                    elif menu_items[current_selection] == 'Configure Algebra Elements':
+                        toggle_algebra_operations(term)
+                    elif menu_items[current_selection] == 'Adjust Algebra Difficulties':
+                        adjust_algebra_difficulties(term)
+                elif key.lower() == 'q':
+                    return
+
+def toggle_algebra_operations(term):
+    """
+    Toggle algebra operations and elements on and off.
+    
+    This function allows the user to enable or disable specific algebra elements
+    such as parentheses, exponents, fractions, and variables.
+    """
+    global config
+    
+    # List all algebra elements except 'enabled'
+    algebra_elements = [element for element in config['algebra'] if element != 'enabled']
+    current_selection = 0
+    
+    with term.cbreak(), term.hidden_cursor():
+        while True:
+            print(term.clear)
+            print(term.bold + "Configure Algebra Elements\n" + term.normal)
+            
+            for i, element in enumerate(algebra_elements):
+                if config['algebra'][element]:
+                    status = "Enabled"
+                else:
+                    status = "Disabled"
+                if i == current_selection:
+                    print(term.reverse + f"{element.capitalize()}: {status}")
+                else:
+                    print(term.normal + f"{element.capitalize()}: {status}")
+
+            print("\nPress Enter to toggle, q to return")
+            
+            key = term.inkey()
+            if key.code == term.KEY_UP:
+                current_selection = max(0, current_selection - 1)
+            elif key.code == term.KEY_DOWN:
+                current_selection = min(len(algebra_elements) - 1, current_selection + 1)
+            elif key.code == term.KEY_ENTER:
+                element = algebra_elements[current_selection]
+                config['algebra'][element] = not config['algebra'][element]
+                save_config(config)
+            elif key.lower() == 'q':
+                return
+
+def adjust_algebra_difficulties(term):
+    """
+    Adjust difficulties for each algebra element.
+    This function allows the user to manually adjust the difficulty levels for algebra operations.
+    """
+    global config
+    
+    algebra_types = list(config['algebra_difficulties'].keys())
+    current_selection = 0
+    with term.cbreak(), term.hidden_cursor():
+        while True:
+            print(term.clear)
+            print(term.bold + "Algebra Difficulty Settings\n" + term.normal)
+            
+            for i, alg_type in enumerate(algebra_types):
+                difficulty = config['algebra_difficulties'][alg_type]
+                if i == current_selection:
+                    print(term.reverse + f"{alg_type.title()}: {difficulty}")
+                else:
+                    print(term.normal + f"{alg_type.title()}: {difficulty}")
+
+            print("\nUse ← → to adjust difficulty, ↑ ↓ to navigate, Enter/q to return")
+            
+            key = term.inkey()
+            if key.code == term.KEY_UP:
+                current_selection = max(0, current_selection - 1)
+            elif key.code == term.KEY_DOWN:
+                current_selection = min(len(algebra_types) - 1, current_selection + 1)
+            elif key.code == term.KEY_LEFT:
+                if config['algebra_difficulties'][algebra_types[current_selection]] > 1:
+                    config['algebra_difficulties'][algebra_types[current_selection]] -= 1
+                    save_config(config)
+            elif key.code == term.KEY_RIGHT:
+                config['algebra_difficulties'][algebra_types[current_selection]] += 1
+                save_config(config)
+            elif key.code == term.KEY_ENTER or key.lower() == 'q':
+                return
