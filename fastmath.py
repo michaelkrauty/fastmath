@@ -5,62 +5,39 @@ __version__ = "2.0.0"
 import random
 import time
 import statistics
-import re
 import os
 import json
 import operator
 from blessed import Terminal
 from datetime import datetime
-from fractions import Fraction
 from platformdirs import user_data_dir
 
 SAFE_OPS = {
     '+': operator.add,
     '-': operator.sub,
     '*': operator.mul,
-    '/': operator.floordiv,
+    '/': operator.truediv,
 }
 
 def safe_eval_basic(num1, op, num2):
     """Evaluate a basic arithmetic expression without eval()."""
     if op not in SAFE_OPS:
         raise ValueError(f"Unknown operator: {op}")
-    return SAFE_OPS[op](num1, num2)
+    result = SAFE_OPS[op](num1, num2)
+    if isinstance(result, float) and result == int(result):
+        return int(result)
+    return result
 
 def safe_eval_problem(problem_str):
     """Safely evaluate a basic 'num1 op num2' problem string."""
     parts = problem_str.split()
     if len(parts) != 3:
         raise ValueError(f"Cannot safely evaluate: {problem_str}")
-    return safe_eval_basic(int(parts[0]), parts[1], int(parts[2]))
+    result = safe_eval_basic(int(parts[0]), parts[1], int(parts[2]))
+    if isinstance(result, float) and result == int(result):
+        return int(result)
+    return result
 
-def _safe_eval_fractions(expr):
-    """Safely evaluate a fraction expression like 'Fraction(1,2) + Fraction(3,4)'.
-    Returns a Fraction or None on failure."""
-    try:
-        # Extract all Fraction(a,b) tokens
-        tokens = re.findall(r'Fraction\((\d+),\s*(\d+)\)|([+\-*])|(\()|(\))', expr)
-        if not tokens:
-            return None
-        # Simple case: single operation between two fractions
-        fracs = re.findall(r'Fraction\((\d+),\s*(\d+)\)', expr)
-        ops = re.findall(r'(?<!\w)[+\-*](?!\d)', expr)
-        if len(fracs) < 1:
-            return None
-        result = Fraction(int(fracs[0][0]), int(fracs[0][1]))
-        for i, op in enumerate(ops):
-            if i + 1 >= len(fracs):
-                break
-            right = Fraction(int(fracs[i+1][0]), int(fracs[i+1][1]))
-            if op == '+':
-                result = result + right
-            elif op == '-':
-                result = result - right
-            elif op == '*':
-                result = result * right
-        return result
-    except Exception:
-        return None
 
 
 # Define application data directory
@@ -879,32 +856,6 @@ def generate_fractions_problem(max_val, difficulty, allow_negative):
                         answer = f"{sign}{whole_part} {remainder}/{result_denom}"
             else:
                 answer = f"{result_num}/{result_denom}"
-    
-    try:
-        # Validate the problem and answer by parsing fraction expressions
-        eval_problem = problem
-        if difficulty >= 3 and "whole_num" in locals():
-            eval_problem = eval_problem.replace(f"{whole_num} {num}/{denom}", f"({whole_num} * {denom} + {num}) / {denom}")
-
-        # Replace a/b with Fraction(a,b) and evaluate safely
-        frac_problem = re.sub(r'(\d+)/(\d+)', r'Fraction(\1, \2)', eval_problem)
-        # Parse and evaluate fraction expressions without eval()
-        eval_answer = _safe_eval_fractions(frac_problem)
-
-        if eval_answer is not None:
-            if isinstance(eval_answer, Fraction):
-                if eval_answer.denominator == 1:
-                    validate_answer = str(eval_answer.numerator)
-                else:
-                    validate_answer = f"{eval_answer.numerator}/{eval_answer.denominator}"
-            else:
-                validate_answer = str(eval_answer)
-
-            if validate_answer != answer and eval_answer != 0:
-                answer = validate_answer
-    except Exception:
-        if difficulty > 1:
-            return generate_fractions_problem(max_val, difficulty-1, allow_negative)
     
     return problem, answer
 
