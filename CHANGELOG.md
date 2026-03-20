@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-03-20
+
+### Added
+- `pyproject.toml` with pip-installable packaging and `fastmath` CLI entry point
+- `.gitignore`
+- Safe arithmetic evaluation — all `eval()` calls replaced with explicit operators
+- Algebra stats display in the statistics screen
+
+### Fixed
+- Stats screen crash when algebra problems exist in performance history
+- All bare `except:` clauses narrowed to `except Exception:`
+- Removed unused imports (`shutil`)
+- Removed redundant file existence check in `save_performance_data`
+- Fraction validation no longer uses `eval()`
+
+### Changed
+- Rewrote README for clarity and added install instructions
+- Version bump to 2.0.0
+
 ## [1.2.1] - 2025-04-10
 
 ### Added
